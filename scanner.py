@@ -3,7 +3,7 @@ import logging
 from exchange import BingXClient
 from market_cap import MarketCapProvider
 from database import save_price, get_historical_price, can_send_alert, update_alert_time, cleanup_history
-from bot import TelegramNotifier
+from notifier import TelegramNotifier
 import config
 
 logger = logging.getLogger(__name__)
