@@ -1,7 +1,8 @@
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import logging
-import state
+from datetime import datetime
+from database import get_last_signal_from_db
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger(__name__)
@@ -20,36 +21,46 @@ class TelegramNotifier:
         """Ответ на команду /start"""
         await message.reply(
             "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "🚀 Отправь мне команду /test, чтобы я прислал пример сигнала с реальными данными."
+            "🚀 Отправь мне команду /test, чтобы я прислал самый последний реальный памп из базы данных."
         )
 
     async def send_test_signal(self, message: types.Message):
-        """Переотправка последнего реального сигнала или создание примера"""
-        last_data = state.get_last_signal()
+        """Поиск самого последнего реального пампа в базе данных"""
+        last_data = await get_last_signal_from_db()
         
-        if last_data:
-            await message.reply("Переотправляю последний найденный памп...")
-            await self.send_signal(
-                emoji=last_data["emoji"],
-                symbol=last_data["symbol"] + " (RE-TEST)",
-                price=last_data["price"],
-                change_pct=last_data["change_pct"],
-                market_cap=last_data["mc"],
-                volume_24h=last_data["volume"],
-                url=last_data["url"]
+        if not last_data:
+            await message.reply(
+                "❌ В базе данных пока нет реальных сигналов.\n"
+                "Бот должен проработать какое-то время и найти первый памп, чтобы он сохранился в историю."
             )
-        else:
-            await message.reply("⏳ Реальных пампов еще не зафиксировано, присылаю ПРИМЕР на базе BTC:")
-            # Отправляем пример на базе BTC, но данные подставим как "тестовые"
-            await self.send_signal(
-                emoji="📈",
-                symbol="BTC/USDT (SAMPLE)",
-                price=65000.0,
-                change_pct=2.5,
-                market_cap=1200000000000,
-                volume_24h=35000000000,
-                url="https://bingx.com/en-us/futures/forward/BTC-USDT"
+            return
+
+        # Форматируем дату
+        dt_object = datetime.fromtimestamp(last_data["timestamp"])
+        formatted_time = dt_object.strftime("%d.%m.%Y %H:%M:%S")
+
+        await message.reply(f"Нашел последний реальный сигнал в базе (от {formatted_time}). Отправляю в канал...")
+        
+        # Специальный формат для теста с датой
+        test_message = (
+            f"{last_data['emoji']} <b>PUMP ALERT! (REAL TEST)</b> {last_data['emoji']}\n\n"
+            f"<b>Ticker:</b> {last_data['symbol']}\n"
+            f"<b>Price:</b> {last_data['price']:.6f} USDT\n"
+            f"<b>1h Change:</b> {last_data['change_pct']:+.2f}%\n"
+            f"<b>Volume 24h:</b> ${last_data['volume']:,.0f}\n"
+            f"<b>Market Cap:</b> ${last_data['mc']:,.0f}\n"
+            f"<b>Signal Date:</b> {formatted_time}\n\n"
+            f"<a href='{last_data['url']}'>Trade on BingX</a>"
+        )
+
+        try:
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=test_message,
+                parse_mode="HTML"
             )
+        except Exception as e:
+            logger.error(f"Failed to send test message: {e}")
 
     async def send_signal(self, 
                           emoji: str, 
@@ -59,7 +70,7 @@ class TelegramNotifier:
                           market_cap: float, 
                           volume_24h: float,
                           url: str):
-        """Send a pump signal to Telegram."""
+        """Стандартный формат сигнала для реального времени"""
         message = (
             f"{emoji} <b>PUMP ALERT!</b> {emoji}\n\n"
             f"<b>Ticker:</b> {symbol}\n"

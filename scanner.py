@@ -66,16 +66,11 @@ class PumpScanner:
                                 # Check cooldown
                                 if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
                                     url = self.exchange.get_trading_url(symbol)
-                                    # Сохраняем последний сигнал для команды /test
-                                    state.set_last_signal({
-                                        "emoji": emoji,
-                                        "symbol": symbol,
-                                        "price": current_price,
-                                        "change_pct": change_pct,
-                                        "mc": mc,
-                                        "volume": current_volume,
-                                        "url": url
-                                    })
+                                    # Сохраняем сигнал в историю базы данных
+                                    from database import save_signal_to_history
+                                    await save_signal_to_history(
+                                        symbol, current_price, change_pct, mc, current_volume, emoji, url
+                                    )
                                     
                                     await self.notifier.send_signal(
                                         emoji, symbol, current_price, change_pct, mc, current_volume, url
