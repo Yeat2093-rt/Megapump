@@ -20,30 +20,36 @@ class TelegramNotifier:
         """Ответ на команду /start"""
         await message.reply(
             "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "🚀 Отправь мне команду /test, чтобы я повторно прислал в канал самый последний найденный реальный памп."
+            "🚀 Отправь мне команду /test, чтобы я прислал пример сигнала с реальными данными."
         )
 
     async def send_test_signal(self, message: types.Message):
-        """Переотправка последнего реального сигнала"""
+        """Переотправка последнего реального сигнала или создание примера"""
         last_data = state.get_last_signal()
         
-        if not last_data:
-            await message.reply(
-                "❌ Реальных сигналов еще не было с момента запуска.\n"
-                "Бот должен проработать минимум 60 минут, чтобы найти первый памп."
+        if last_data:
+            await message.reply("Переотправляю последний найденный памп...")
+            await self.send_signal(
+                emoji=last_data["emoji"],
+                symbol=last_data["symbol"] + " (RE-TEST)",
+                price=last_data["price"],
+                change_pct=last_data["change_pct"],
+                market_cap=last_data["mc"],
+                volume_24h=last_data["volume"],
+                url=last_data["url"]
             )
-            return
-
-        await message.reply("Переотправляю последний реальный сигнал в канал...")
-        await self.send_signal(
-            emoji=last_data["emoji"],
-            symbol=last_data["symbol"] + " (RE-TEST)",
-            price=last_data["price"],
-            change_pct=last_data["change_pct"],
-            market_cap=last_data["mc"],
-            volume_24h=last_data["volume"],
-            url=last_data["url"]
-        )
+        else:
+            await message.reply("⏳ Реальных пампов еще не зафиксировано, присылаю ПРИМЕР на базе BTC:")
+            # Отправляем пример на базе BTC, но данные подставим как "тестовые"
+            await self.send_signal(
+                emoji="📈",
+                symbol="BTC/USDT (SAMPLE)",
+                price=65000.0,
+                change_pct=2.5,
+                market_cap=1200000000000,
+                volume_24h=35000000000,
+                url="https://bingx.com/en-us/futures/forward/BTC-USDT"
+            )
 
     async def send_signal(self, 
                           emoji: str, 
