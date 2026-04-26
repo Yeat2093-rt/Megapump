@@ -11,15 +11,27 @@ class TelegramNotifier:
         self.dp = Dispatcher()
         self.chat_id = TELEGRAM_CHAT_ID
         
-        # Регистрируем обработчик команды /start
+        # Регистрируем обработчики
         self.dp.message.register(self.send_welcome, Command("start"))
+        self.dp.message.register(self.send_test_signal, Command("test"))
 
     async def send_welcome(self, message: types.Message):
         """Ответ на команду /start"""
         await message.reply(
             "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "✅ Я работаю в фоновом режиме и пришлю сигнал в канал, "
-            "как только замечу резкий рост монеты (от 7% за час)."
+            "🚀 Отправь мне команду /test, чтобы я прислал пробный сигнал в твой канал."
+        )
+
+    async def send_test_signal(self, message: types.Message):
+        """Отправка тестового сигнала в канал по команде /test"""
+        await message.reply("Отправляю тестовый сигнал в канал...")
+        await self.send_signal(
+            emoji="🚨",
+            symbol="BTC/USDT (TEST)",
+            price=65432.10,
+            change_pct=35.5,
+            market_cap=1200000000000,
+            url="https://bingx.com/en-us/futures/forward/BTC-USDT"
         )
 
     async def send_signal(self, 
