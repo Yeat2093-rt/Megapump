@@ -1,6 +1,7 @@
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import logging
+import state
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger(__name__)
@@ -19,20 +20,29 @@ class TelegramNotifier:
         """Ответ на команду /start"""
         await message.reply(
             "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "🚀 Отправь мне команду /test, чтобы я прислал пробный сигнал в твой канал."
+            "🚀 Отправь мне команду /test, чтобы я повторно прислал в канал самый последний найденный реальный памп."
         )
 
     async def send_test_signal(self, message: types.Message):
-        """Отправка тестового сигнала в канал по команде /test"""
-        await message.reply("Отправляю тестовый сигнал в канал...")
+        """Переотправка последнего реального сигнала"""
+        last_data = state.get_last_signal()
+        
+        if not last_data:
+            await message.reply(
+                "❌ Реальных сигналов еще не было с момента запуска.\n"
+                "Бот должен проработать минимум 60 минут, чтобы найти первый памп."
+            )
+            return
+
+        await message.reply("Переотправляю последний реальный сигнал в канал...")
         await self.send_signal(
-            emoji="🚨",
-            symbol="BTC/USDT (TEST)",
-            price=65432.10,
-            change_pct=35.5,
-            market_cap=1200000000000,
-            volume_24h=35000000000,
-            url="https://bingx.com/en-us/futures/forward/BTC-USDT"
+            emoji=last_data["emoji"],
+            symbol=last_data["symbol"] + " (RE-TEST)",
+            price=last_data["price"],
+            change_pct=last_data["change_pct"],
+            market_cap=last_data["mc"],
+            volume_24h=last_data["volume"],
+            url=last_data["url"]
         )
 
     async def send_signal(self, 

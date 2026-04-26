@@ -4,6 +4,7 @@ from exchange import BingXClient
 from market_cap import MarketCapProvider
 from database import save_price, get_historical_price, can_send_alert, update_alert_time, cleanup_history
 from notifier import TelegramNotifier
+import state
 import config
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,17 @@ class PumpScanner:
                                 # Check cooldown
                                 if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
                                     url = self.exchange.get_trading_url(symbol)
+                                    # Сохраняем последний сигнал для команды /test
+                                    state.set_last_signal({
+                                        "emoji": emoji,
+                                        "symbol": symbol,
+                                        "price": current_price,
+                                        "change_pct": change_pct,
+                                        "mc": mc,
+                                        "volume": current_volume,
+                                        "url": url
+                                    })
+                                    
                                     await self.notifier.send_signal(
                                         emoji, symbol, current_price, change_pct, mc, current_volume, url
                                     )
