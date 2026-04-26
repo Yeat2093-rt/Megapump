@@ -17,7 +17,7 @@ async def init_db():
                 symbol TEXT, last_alert_time INTEGER
             )
         ''')
-        # НОВАЯ: История всех отправленных сигналов
+        # История всех отправленных сигналов
         await db.execute('''
             CREATE TABLE IF NOT EXISTS signal_history (
                 symbol TEXT, price REAL, change_pct REAL, 
@@ -79,4 +79,11 @@ async def update_alert_time(symbol: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('INSERT OR REPLACE INTO alerts (symbol, last_alert_time) VALUES (?, ?)',
                          (symbol, current_time))
+        await db.commit()
+
+async def cleanup_history(days: int = 1):
+    """Очистка старых цен, чтобы база не разрасталась"""
+    cutoff_time = int(time.time()) - (days * 24 * 3600)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM price_history WHERE timestamp < ?', (cutoff_time,))
         await db.commit()
