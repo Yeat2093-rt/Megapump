@@ -11,8 +11,9 @@ MEGA_PUMP_THRESHOLD = 30.0
 PUMP_THRESHOLD = 15.0
 LOW_PUMP_THRESHOLD = 7.0
 
-# Market Cap filter
-MIN_MARKET_CAP = 5_000_000
+# Market Cap and Volume filter
+MIN_MARKET_CAP = 20_000_000
+MIN_VOLUME_24H = 5_000_000
 
 # Cache settings
 SCAN_INTERVAL_SECONDS = 60 # How often to check for current prices

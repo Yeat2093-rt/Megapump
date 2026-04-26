@@ -31,6 +31,7 @@ class TelegramNotifier:
             price=65432.10,
             change_pct=35.5,
             market_cap=1200000000000,
+            volume_24h=35000000000,
             url="https://bingx.com/en-us/futures/forward/BTC-USDT"
         )
 
@@ -40,6 +41,7 @@ class TelegramNotifier:
                           price: float, 
                           change_pct: float, 
                           market_cap: float, 
+                          volume_24h: float,
                           url: str):
         """Send a pump signal to Telegram."""
         message = (
@@ -47,6 +49,7 @@ class TelegramNotifier:
             f"<b>Ticker:</b> {symbol}\n"
             f"<b>Price:</b> {price:.6f} USDT\n"
             f"<b>1h Change:</b> {change_pct:+.2f}%\n"
+            f"<b>Volume 24h:</b> ${volume_24h:,.0f}\n"
             f"<b>Market Cap:</b> ${market_cap:,.0f}\n\n"
             f"<a href='{url}'>Trade on BingX</a>"
         )

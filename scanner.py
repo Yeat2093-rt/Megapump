@@ -31,10 +31,13 @@ class PumpScanner:
                     mc_update_counter = 0
                     await cleanup_history(days=2) # Regular cleanup
 
-                # Get current prices
-                current_prices = await self.exchange.get_all_tickers()
+                # Get current prices and volumes
+                ticker_data = await self.exchange.get_all_tickers()
                 
-                for symbol, current_price in current_prices.items():
+                for symbol, data in ticker_data.items():
+                    current_price = data['price']
+                    current_volume = data['volume']
+                    
                     # Save current price to history
                     await save_price(symbol, current_price)
                     
@@ -54,17 +57,19 @@ class PumpScanner:
                             emoji = "📈"
                             
                         if emoji:
-                            # Filter by Market Cap
+                            # Filter by Market Cap and Volume
                             mc = self.mc_provider.get_market_cap(symbol)
-                            if mc >= config.MIN_MARKET_CAP:
+                            
+                            # Apply filters: Market Cap AND Volume
+                            if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
                                 # Check cooldown
                                 if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
                                     url = self.exchange.get_trading_url(symbol)
                                     await self.notifier.send_signal(
-                                        emoji, symbol, current_price, change_pct, mc, url
+                                        emoji, symbol, current_price, change_pct, mc, current_volume, url
                                     )
                                     await update_alert_time(symbol)
-                                    logger.info(f"Signal sent for {symbol}: {change_pct:.2f}%")
+                                    logger.info(f"Signal sent for {symbol}: {change_pct:.2f}% (Vol: {current_volume:.2f})")
 
             except Exception as e:
                 logger.error(f"Error in scanner loop: {e}")

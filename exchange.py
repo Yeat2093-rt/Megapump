@@ -10,8 +10,8 @@ class BingXClient:
             'enableRateLimit': True,
         })
 
-    async def get_all_tickers(self) -> Dict[str, float]:
-        """Fetch all USDT-M swap tickers and their current prices."""
+    async def get_all_tickers(self) -> Dict[str, Dict[str, float]]:
+        """Fetch all USDT-M swap tickers and their current prices and volumes."""
         try:
             # Load markets first to ensure we have all symbols
             await self.exchange.load_markets()
@@ -20,13 +20,16 @@ class BingXClient:
             tickers = await self.exchange.fetch_tickers()
             
             # Filter for USDT pairs (usually futures/swaps on BingX have :USDT or /USDT)
-            usdt_prices = {}
+            usdt_data = {}
             for symbol, data in tickers.items():
                 if '/USDT' in symbol or ':USDT' in symbol:
-                    if data['last'] is not None:
-                        usdt_prices[symbol] = data['last']
+                    if data['last'] is not None and data['quoteVolume'] is not None:
+                        usdt_data[symbol] = {
+                            'price': data['last'],
+                            'volume': data['quoteVolume']
+                        }
             
-            return usdt_prices
+            return usdt_data
         except Exception as e:
             logger.error(f"Error fetching tickers from BingX: {e}")
             return {}
