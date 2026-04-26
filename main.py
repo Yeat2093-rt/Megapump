@@ -46,6 +46,10 @@ async def main():
     mc_provider = MarketCapProvider()
     notifier = TelegramNotifier()
     
+    # Give notifier access to exchange for live tests
+    notifier.exchange = exchange
+    notifier.mc_provider = mc_provider
+    
     # Start Telegram bot polling in background (to handle /start command)
     asyncio.create_task(notifier.dp.start_polling(notifier.bot))
     
