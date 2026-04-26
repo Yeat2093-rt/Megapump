@@ -29,7 +29,6 @@ async def start_web_server():
     app.add_routes([web.get('/', handle)])
     runner = web.AppRunner(app)
     await runner.setup()
-    # Render provides PORT environment variable
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
@@ -46,6 +45,9 @@ async def main():
     exchange = BingXClient()
     mc_provider = MarketCapProvider()
     notifier = TelegramNotifier()
+    
+    # Start Telegram bot polling in background (to handle /start command)
+    asyncio.create_task(notifier.dp.start_polling(notifier.bot))
     
     scanner = PumpScanner(exchange, mc_provider, notifier)
     
