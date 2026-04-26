@@ -42,3 +42,12 @@ class BingXClient:
         # Symbol format e.g., BTC/USDT:USDT -> BTC-USDT
         clean_symbol = symbol.replace('/', '-').replace(':USDT', '')
         return f"https://bingx.com/en-us/futures/forward/{clean_symbol}/"
+
+    async def fetch_ohlcv(self, symbol: str, timeframe: str = '15m', limit: int = 60):
+        """Fetch OHLCV data for a symbol."""
+        try:
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            return ohlcv
+        except Exception as e:
+            logger.error(f"Error fetching OHLCV for {symbol}: {e}")
+            return None

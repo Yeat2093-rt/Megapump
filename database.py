@@ -22,10 +22,24 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS signal_history (
                 symbol TEXT, price REAL, change_pct REAL, 
                 market_cap REAL, volume REAL, emoji TEXT, 
-                url TEXT, timestamp INTEGER
+                url TEXT, timestamp INTEGER, message_id INTEGER
+            )
+        ''')
+        # Таблица для отслеживания активных сигналов, которые можно обновлять
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS active_signals (
+                symbol TEXT PRIMARY KEY, message_id INTEGER, 
+                last_update INTEGER, initial_price REAL
             )
         ''')
         await db.commit()
+
+        # Миграция: Добавляем message_id в историю
+        try:
+            await db.execute('ALTER TABLE signal_history ADD COLUMN message_id INTEGER')
+            await db.commit()
+        except:
+            pass
 
 async def save_price(symbol: str, price: float):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -33,13 +47,31 @@ async def save_price(symbol: str, price: float):
                          (symbol, price, int(time.time())))
         await db.commit()
 
-async def save_signal_to_history(symbol, price, change_pct, market_cap, volume, emoji, url):
+async def save_signal_to_history(symbol, price, change_pct, market_cap, volume, emoji, url, message_id=None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             INSERT INTO signal_history 
-            (symbol, price, change_pct, market_cap, volume, emoji, url, timestamp) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (symbol, price, change_pct, market_cap, volume, emoji, url, int(time.time())))
+            (symbol, price, change_pct, market_cap, volume, emoji, url, timestamp, message_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (symbol, price, change_pct, market_cap, volume, emoji, url, int(time.time()), message_id))
+        await db.commit()
+
+async def save_active_signal(symbol, message_id, price):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT OR REPLACE INTO active_signals (symbol, message_id, last_update, initial_price)
+            VALUES (?, ?, ?, ?)
+        ''', (symbol, message_id, int(time.time()), price))
+        await db.commit()
+
+async def get_active_signal(symbol):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('SELECT message_id, initial_price FROM active_signals WHERE symbol = ?', (symbol,)) as cursor:
+            return await cursor.fetchone()
+
+async def remove_active_signal(symbol):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM active_signals WHERE symbol = ?', (symbol,))
         await db.commit()
 
 async def get_last_signal_from_db():

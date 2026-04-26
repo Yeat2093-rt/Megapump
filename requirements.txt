@@ -1,5 +1,7 @@
 ccxt
 aiogram
 python-dotenv
+pandas
+mplfinance
 aiohttp
 aiosqlite

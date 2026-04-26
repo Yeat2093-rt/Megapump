@@ -1,9 +1,11 @@
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 import logging
 from datetime import datetime
 from database import get_last_signal_from_db
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from chart_generator import generate_chart
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +36,14 @@ class TelegramNotifier:
             dt_object = datetime.fromtimestamp(last_data["timestamp"])
             formatted_time = dt_object.strftime("%d.%m.%Y %H:%M:%S")
             await message.reply(f"✅ Нашел последний сохраненный памп (от {formatted_time}). Отправляю...")
-            await self.send_signal_internal(
+            await self.send_signal(
                 emoji=last_data["emoji"],
-                symbol=last_data["symbol"] + " (HISTORY)",
+                symbol=last_data["symbol"],
                 price=last_data["price"],
                 change_pct=last_data["change_pct"],
                 market_cap=last_data["mc"],
                 volume_24h=last_data["volume"],
-                url=last_data["url"],
-                time_str=formatted_time
+                url=last_data["url"]
             )
             return
 
@@ -71,40 +72,119 @@ class TelegramNotifier:
             mc = self.mc_provider.get_market_cap(symbol)
             url = self.exchange.get_trading_url(symbol)
             
-            now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-            
-            await self.send_signal_internal(
+            await self.send_signal(
                 emoji="📈",
-                symbol=symbol + " (LIVE TOP)",
+                symbol=symbol,
                 price=price,
                 change_pct=change_24h,
                 market_cap=mc,
                 volume_24h=volume,
-                url=url,
-                time_str=now_str
+                url=url
             )
         except Exception as e:
             logger.error(f"Error in live test: {e}")
             await message.reply(f"Ошибка при поиске данных: {e}")
 
-    async def send_signal_internal(self, emoji, symbol, price, change_pct, market_cap, volume_24h, url, time_str):
-        """Внутренний метод для отправки оформленного сообщения"""
-        message = (
-            f"{emoji} <b>PUMP ALERT! (REAL DATA)</b> {emoji}\n\n"
+    async def send_signal(self, emoji, symbol, price, change_pct, market_cap, volume_24h, url):
+        """Стандартный метод для реального сканера с генерацией графика"""
+        now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        
+        # Подготовка текста
+        text = (
+            f"{emoji} <b>PUMP ALERT!</b> {emoji}\n\n"
             f"<b>Ticker:</b> {symbol}\n"
             f"<b>Price:</b> {price:.6f} USDT\n"
-            f"<b>Change (24h/1h):</b> {change_pct:+.2f}%\n"
+            f"<b>Change:</b> {change_pct:+.2f}%\n"
             f"<b>Volume 24h:</b> ${volume_24h:,.0f}\n"
             f"<b>Market Cap:</b> ${market_cap:,.0f}\n"
-            f"<b>Data Time:</b> {time_str}\n\n"
-            f"<a href='{url}'>Trade on BingX</a>"
+            f"<b>Time:</b> {now_str}\n"
         )
-        await self.bot.send_message(chat_id=self.chat_id, text=message, parse_mode="HTML")
 
-    async def send_signal(self, emoji, symbol, price, change_pct, market_cap, volume_24h, url):
-        """Стандартный метод для реального сканера"""
+        # Создание кнопок
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📈 Trade on BingX", url=url),
+                InlineKeyboardButton(text="📊 TradingView", url=f"https://www.tradingview.com/chart/?symbol=BINGX:{symbol.replace('/', '').replace(':USDT', '')}")
+            ]
+        ])
+
+        # Попытка сгенерировать график
+        chart_buf = None
+        if self.exchange:
+            try:
+                ohlcv = await self.exchange.fetch_ohlcv(symbol)
+                if ohlcv:
+                    chart_buf = generate_chart(ohlcv, symbol)
+            except Exception as e:
+                logger.error(f"Could not generate chart for {symbol}: {e}")
+
+        try:
+            sent_msg = None
+            if chart_buf:
+                # Отправляем фото с кнопками
+                photo = BufferedInputFile(chart_buf.read(), filename=f"{symbol}_chart.png")
+                sent_msg = await self.bot.send_photo(
+                    chat_id=self.chat_id,
+                    photo=photo,
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            else:
+                # Если графика нет, отправляем просто текст
+                sent_msg = await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            return sent_msg.message_id if sent_msg else None
+        except Exception as e:
+            logger.error(f"Error sending signal to Telegram: {e}")
+            return None
+
+    async def update_signal(self, message_id, emoji, symbol, price, change_pct, market_cap, volume_24h, url):
+        """Обновление существующего сообщения при продолжении пампа"""
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        await self.send_signal_internal(emoji, symbol, price, change_pct, market_cap, volume_24h, url, now_str)
+        
+        text = (
+            f"{emoji} <b>PUMP UPDATE! (STILL GROWING)</b> {emoji}\n\n"
+            f"<b>Ticker:</b> {symbol}\n"
+            f"<b>Current Price:</b> {price:.6f} USDT\n"
+            f"<b>New Change:</b> {change_pct:+.2f}%\n"
+            f"<b>Volume 24h:</b> ${volume_24h:,.0f}\n"
+            f"<b>Market Cap:</b> ${market_cap:,.0f}\n"
+            f"<b>Updated At:</b> {now_str}\n"
+        )
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📈 Trade on BingX", url=url),
+                InlineKeyboardButton(text="📊 TradingView", url=f"https://www.tradingview.com/chart/?symbol=BINGX:{symbol.replace('/', '').replace(':USDT', '')}")
+            ]
+        ])
+
+        try:
+            # Редактируем подпись к фото (caption)
+            await self.bot.edit_message_caption(
+                chat_id=self.chat_id,
+                message_id=message_id,
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            # Если это было обычное сообщение без фото
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=self.chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except Exception as e2:
+                logger.error(f"Error updating signal {message_id}: {e2}")
 
     async def close(self):
         session = await self.bot.get_session()

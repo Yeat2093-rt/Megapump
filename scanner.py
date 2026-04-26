@@ -2,10 +2,15 @@ import asyncio
 import logging
 from exchange import BingXClient
 from market_cap import MarketCapProvider
-from database import save_price, get_historical_price, can_send_alert, update_alert_time, cleanup_history
+from database import (
+    save_price, get_historical_price, can_send_alert, 
+    update_alert_time, cleanup_history, save_signal_to_history,
+    get_active_signal, save_active_signal, remove_active_signal
+)
 from notifier import TelegramNotifier
 import state
 import config
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,8 @@ class PumpScanner:
                     await self.mc_provider.update_market_caps()
                     mc_update_counter = 0
                     await cleanup_history(days=2) # Regular cleanup
+                    # Cleanup old active signals (e.g., older than 2 hours)
+                    # (Simplified for now)
 
                 # Get current prices and volumes
                 ticker_data = await self.exchange.get_all_tickers()
@@ -63,20 +70,32 @@ class PumpScanner:
                             
                             # Apply filters: Market Cap AND Volume
                             if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
-                                # Check cooldown
-                                if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
-                                    url = self.exchange.get_trading_url(symbol)
-                                    # Сохраняем сигнал в историю базы данных
-                                    from database import save_signal_to_history
-                                    await save_signal_to_history(
-                                        symbol, current_price, change_pct, mc, current_volume, emoji, url
+                                url = self.exchange.get_trading_url(symbol)
+                                active_sig = await get_active_signal(symbol)
+                                
+                                if active_sig:
+                                    # Signal already exists, update it if growth continues
+                                    msg_id, initial_price = active_sig
+                                    # Only update if price increased significantly since last update (e.g. >1%)
+                                    # Or just update every cycle (up to you). Let's do >1% from initial or just update
+                                    await self.notifier.update_signal(
+                                        msg_id, emoji, symbol, current_price, change_pct, mc, current_volume, url
                                     )
-                                    
-                                    await self.notifier.send_signal(
-                                        emoji, symbol, current_price, change_pct, mc, current_volume, url
-                                    )
-                                    await update_alert_time(symbol)
-                                    logger.info(f"Signal sent for {symbol}: {change_pct:.2f}% (Vol: {current_volume:.2f})")
+                                    logger.info(f"Updated signal for {symbol}: {change_pct:.2f}%")
+                                else:
+                                    # New signal
+                                    if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
+                                        msg_id = await self.notifier.send_signal(
+                                            emoji, symbol, current_price, change_pct, mc, current_volume, url
+                                        )
+                                        
+                                        if msg_id:
+                                            await save_active_signal(symbol, msg_id, current_price)
+                                            await save_signal_to_history(
+                                                symbol, current_price, change_pct, mc, current_volume, emoji, url, msg_id
+                                            )
+                                            await update_alert_time(symbol)
+                                            logger.info(f"New signal sent for {symbol}: {change_pct:.2f}%")
 
             except Exception as e:
                 logger.error(f"Error in scanner loop: {e}")
