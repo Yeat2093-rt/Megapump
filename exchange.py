@@ -22,13 +22,15 @@ class BingXClient:
             # Filter for USDT pairs (usually futures/swaps on BingX have :USDT or /USDT)
             usdt_data = {}
             for symbol, data in tickers.items():
-                if '/USDT' in symbol or ':USDT' in symbol:
+                # Проверяем, есть ли USDT в названии и не является ли это какой-то другой валютой
+                if 'USDT' in symbol.upper():
                     if data['last'] is not None and data['quoteVolume'] is not None:
                         usdt_data[symbol] = {
                             'price': data['last'],
                             'volume': data['quoteVolume']
                         }
             
+            logger.info(f"Total USDT pairs found on BingX: {len(usdt_data)}")
             return usdt_data
         except Exception as e:
             logger.error(f"Error fetching tickers from BingX: {e}")
