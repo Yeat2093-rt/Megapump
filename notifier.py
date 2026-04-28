@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 from database import get_last_signal_from_db
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+import config  # Импортируем весь модуль для изменения настроек
 from chart_generator import generate_chart
 
 logger = logging.getLogger(__name__)
@@ -14,22 +15,60 @@ class TelegramNotifier:
         self.bot = Bot(token=TELEGRAM_BOT_TOKEN)
         self.dp = Dispatcher()
         self.chat_id = TELEGRAM_CHAT_ID
-        self.exchange = None  # Будет установлено из main.py
-        self.mc_provider = None # Будет установлено из main.py
+        self.exchange = None  
+        self.mc_provider = None 
         
         # Регистрируем обработчики
         self.dp.message.register(self.send_welcome, Command("start"))
         self.dp.message.register(self.send_test_signal, Command("test"))
         self.dp.message.register(self.check_coin, Command("check"))
+        self.dp.message.register(self.change_settings, Command("settings"))
 
     async def send_welcome(self, message: types.Message):
         """Ответ на команду /start"""
         await message.reply(
             "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "🚀 <b>/test</b> — прислать последний памп или лидера роста.\n"
-            "🔍 <b>/check SYMBOL</b> — проверить данные конкретной монеты (например: /check APE)",
+            "🚀 <b>/test</b> — прислать лидер роста.\n"
+            "🔍 <b>/check SYMBOL</b> — проверить данные монеты.\n"
+            "⚙️ <b>/settings mc [число]</b> — изменить Min Market Cap.\n"
+            "⚙️ <b>/settings vol [число]</b> — изменить Min Volume 24h.\n"
+            "⚙️ <b>/settings pump [число]</b> — изменить порог пампа (в % за час).",
             parse_mode="HTML"
         )
+
+    async def change_settings(self, message: types.Message):
+        """Временная команда для изменения настроек модератором"""
+        args = message.text.split()
+        if len(args) < 3:
+            await message.reply(
+                "📈 <b>Текущие настройки:</b>\n"
+                f"Min Market Cap: ${config.MIN_MARKET_CAP:,.0f}\n"
+                f"Min Volume 24h: ${config.MIN_VOLUME_24H:,.0f}\n"
+                f"Pump Threshold: {config.PUMP_THRESHOLD}%\n\n"
+                "Использование:\n"
+                "<code>/settings mc 1000000</code>\n"
+                "<code>/settings vol 500000</code>\n"
+                "<code>/settings pump 5</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        cmd_type = args[1].lower()
+        try:
+            new_value = float(args[2])
+            if cmd_type == 'mc':
+                config.MIN_MARKET_CAP = new_value
+                await message.reply(f"✅ Min Market Cap изменен на: <b>${new_value:,.0f}</b>", parse_mode="HTML")
+            elif cmd_type == 'vol':
+                config.MIN_VOLUME_24H = new_value
+                await message.reply(f"✅ Min Volume 24h изменен на: <b>${new_value:,.0f}</b>", parse_mode="HTML")
+            elif cmd_type == 'pump':
+                config.PUMP_THRESHOLD = new_value
+                await message.reply(f"✅ Порог пампа изменен на: <b>{new_value}%</b> за час", parse_mode="HTML")
+            else:
+                await message.reply("Неизвестный параметр. Используйте mc, vol или pump.")
+        except ValueError:
+            await message.reply("Ошибка: введите числовое значение.")
 
     async def check_coin(self, message: types.Message):
         """Проверка параметров конкретной монеты для диагностики"""
@@ -46,7 +85,6 @@ class TelegramNotifier:
         await message.reply(f"🔍 Проверяю данные для <b>{symbol_to_check}</b>...", parse_mode="HTML")
 
         try:
-            # Ищем тикер на бирже
             tickers = await self.exchange.get_all_tickers()
             found_symbol = None
             for s in tickers.keys():
@@ -62,16 +100,13 @@ class TelegramNotifier:
             volume = tickers[found_symbol]['volume']
             mc = self.mc_provider.get_market_cap(found_symbol)
             
-            # Доп. данные (OI, RSI, EMA)
             oi = await self.exchange.fetch_open_interest(found_symbol)
             indicators = await self.exchange.get_indicators(found_symbol)
             rsi = indicators.get('rsi')
             ema = indicators.get('ema')
             
-            from config import MIN_MARKET_CAP, MIN_VOLUME_24H
-            
-            status_mc = "✅ OK" if mc >= MIN_MARKET_CAP else f"❌ LOW (Need ${MIN_MARKET_CAP:,.0f})"
-            status_vol = "✅ OK" if volume >= MIN_VOLUME_24H else f"❌ LOW (Need ${MIN_VOLUME_24H:,.0f})"
+            status_mc = "✅ OK" if mc >= config.MIN_MARKET_CAP else f"❌ LOW (Need ${config.MIN_MARKET_CAP:,.0f})"
+            status_vol = "✅ OK" if volume >= config.MIN_VOLUME_24H else f"❌ LOW (Need ${config.MIN_VOLUME_24H:,.0f})"
 
             oi_str = f"${oi:,.0f}" if oi else "N/A"
             rsi_str = f"{rsi:.2f}" if rsi else "N/A"
@@ -85,7 +120,7 @@ class TelegramNotifier:
                 f"📊 <b>Open Interest:</b> {oi_str}\n"
                 f"📉 <b>RSI (15m):</b> {rsi_str}\n"
                 f"📈 <b>EMA 20 (15m):</b> {ema_str}\n\n"
-                f"<i>Если всё OK, бот пришлет сигнал при росте цены более 7% за час.</i>"
+                f"<i>Порог сигнала: {config.PUMP_THRESHOLD}% за час.</i>"
             )
             await message.reply(response, parse_mode="HTML")
             
@@ -94,29 +129,12 @@ class TelegramNotifier:
             await message.reply(f"Ошибка при проверке: {e}")
 
     async def send_test_signal(self, message: types.Message):
-        """Поиск последнего сигнала в базе или поиск топ-гейнера на рынке прямо сейчас"""
-        last_data = await get_last_signal_from_db()
-        
-        if last_data:
-            dt_object = datetime.fromtimestamp(last_data["timestamp"])
-            formatted_time = dt_object.strftime("%d.%m.%Y %H:%M:%S")
-            await message.reply(f"✅ Нашел последний сохраненный памп (от {formatted_time}). Отправляю...")
-            await self.send_signal(
-                emoji=last_data["emoji"],
-                symbol=last_data["symbol"],
-                price=last_data["price"],
-                change_pct=last_data["change_pct"],
-                market_cap=last_data["mc"],
-                volume_24h=last_data["volume"],
-                url=last_data["url"]
-            )
-            return
-
+        """Поиск лидера роста на рынке прямо сейчас"""
         if not self.exchange or not self.mc_provider:
             await message.reply("⏳ Бот еще инициализируется...")
             return
 
-        await message.reply("🔍 В истории пока пусто. Ищу лидера роста на рынке прямо сейчас...")
+        await message.reply("🔍 Ищу лидера роста на рынке прямо сейчас...")
         
         try:
             tickers = await self.exchange.exchange.fetch_tickers()
@@ -134,7 +152,6 @@ class TelegramNotifier:
             mc = self.mc_provider.get_market_cap(symbol)
             url = self.exchange.get_trading_url(symbol)
             
-            # Fetch indicators
             oi = await self.exchange.fetch_open_interest(symbol)
             indicators = await self.exchange.get_indicators(symbol)
             
