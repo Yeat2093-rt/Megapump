@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from database import get_last_signal_from_db
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-import config  # Импортируем весь модуль для изменения настроек
+import config  # Импортируем модуль для динамических настроек
 from chart_generator import generate_chart
 
 logger = logging.getLogger(__name__)
@@ -20,35 +20,56 @@ class TelegramNotifier:
         
         # Регистрируем обработчики
         self.dp.message.register(self.send_welcome, Command("start"))
+        self.dp.message.register(self.send_help, Command("help"))
         self.dp.message.register(self.send_test_signal, Command("test"))
         self.dp.message.register(self.check_coin, Command("check"))
         self.dp.message.register(self.change_settings, Command("settings"))
 
     async def send_welcome(self, message: types.Message):
         """Ответ на команду /start"""
-        await message.reply(
-            "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "🚀 <b>/test</b> — прислать лидер роста.\n"
-            "🔍 <b>/check SYMBOL</b> — проверить данные монеты.\n"
-            "⚙️ <b>/settings mc [число]</b> — изменить Min Market Cap.\n"
-            "⚙️ <b>/settings vol [число]</b> — изменить Min Volume 24h.\n"
-            "⚙️ <b>/settings pump [число]</b> — изменить порог пампа (в % за час).",
-            parse_mode="HTML"
+        text = (
+            "👋 <b>Добро пожаловать в Mega Pump Bot!</b>\n\n"
+            "Я мониторю фьючерсный рынок BingX и присылаю сигналы о резком росте монет.\n\n"
+            "📌 <b>Основные команды:</b>\n"
+            "🚀 /test — показать лидера роста прямо сейчас\n"
+            "🔍 /check [SYMBOL] — проверить параметры монеты\n"
+            "⚙️ /settings — текущие фильтры\n"
+            "❓ /help — подробный список всех команд"
         )
+        await message.reply(text, parse_mode="HTML")
+
+    async def send_help(self, message: types.Message):
+        """Ответ на команду /help"""
+        text = (
+            "📖 <b>Список всех доступных команд:</b>\n\n"
+            "🚀 <b>/test</b>\n"
+            "Ищет монету с самым большим ростом за 24ч на BingX и присылает сигнал по ней для проверки.\n\n"
+            "🔍 <b>/check [SYMBOL]</b> (например: <code>/check APE</code>)\n"
+            "Показывает текущую цену, Market Cap, Объем, RSI и Open Interest. Сразу говорит, подходит ли монета под ваши фильтры.\n\n"
+            "⚙️ <b>/settings</b>\n"
+            "Показывает текущие пороги срабатывания бота.\n\n"
+            "🛠 <b>/settings mc [число]</b>\n"
+            "Меняет Min Market Cap (например: <code>/settings mc 5000000</code>).\n\n"
+            "🛠 <b>/settings vol [число]</b>\n"
+            "Меняет Min Volume 24h (например: <code>/settings vol 1000000</code>).\n\n"
+            "🛠 <b>/settings pump [число]</b>\n"
+            "Меняет порог роста в % за час (например: <code>/settings pump 5</code>)."
+        )
+        await message.reply(text, parse_mode="HTML")
 
     async def change_settings(self, message: types.Message):
-        """Временная команда для изменения настроек модератором"""
+        """Команда для изменения настроек"""
         args = message.text.split()
         if len(args) < 3:
             await message.reply(
-                "📈 <b>Текущие настройки:</b>\n"
-                f"Min Market Cap: ${config.MIN_MARKET_CAP:,.0f}\n"
-                f"Min Volume 24h: ${config.MIN_VOLUME_24H:,.0f}\n"
-                f"Pump Threshold: {config.PUMP_THRESHOLD}%\n\n"
-                "Использование:\n"
-                "<code>/settings mc 1000000</code>\n"
-                "<code>/settings vol 500000</code>\n"
-                "<code>/settings pump 5</code>",
+                "📈 <b>Текущие настройки фильтров:</b>\n\n"
+                f"💎 <b>Min Market Cap:</b> ${config.MIN_MARKET_CAP:,.0f}\n"
+                f"📊 <b>Min Volume 24h:</b> ${config.MIN_VOLUME_24H:,.0f}\n"
+                f"⚡️ <b>Pump Threshold:</b> {config.PUMP_THRESHOLD}% за час\n\n"
+                "Чтобы изменить, используйте:\n"
+                "<code>/settings mc [число]</code>\n"
+                "<code>/settings vol [число]</code>\n"
+                "<code>/settings pump [число]</code>",
                 parse_mode="HTML"
             )
             return
@@ -120,7 +141,7 @@ class TelegramNotifier:
                 f"📊 <b>Open Interest:</b> {oi_str}\n"
                 f"📉 <b>RSI (15m):</b> {rsi_str}\n"
                 f"📈 <b>EMA 20 (15m):</b> {ema_str}\n\n"
-                f"<i>Порог сигнала: {config.PUMP_THRESHOLD}% за час.</i>"
+                f"<i>Текущий порог сигнала: {config.PUMP_THRESHOLD}% за час.</i>"
             )
             await message.reply(response, parse_mode="HTML")
             
