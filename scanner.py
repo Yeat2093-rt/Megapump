@@ -68,14 +68,18 @@ class PumpScanner:
                             # Filter by Market Cap and Volume
                             mc = self.mc_provider.get_market_cap(symbol)
                             
-                            # Fetch additional data (OI, RSI, EMA) - Informational only
-                            oi = await self.exchange.fetch_open_interest(symbol)
-                            indicators = await self.exchange.get_indicators(symbol)
-                            rsi = indicators.get('rsi')
-                            ema = indicators.get('ema')
-
                             # Apply filters: Market Cap AND Volume
                             if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
+                                # Fetch additional data (OI, RSI, EMA) only for coins that passed filters
+                                try:
+                                    oi = await self.exchange.fetch_open_interest(symbol)
+                                    indicators = await self.exchange.get_indicators(symbol)
+                                    rsi = indicators.get('rsi')
+                                    ema = indicators.get('ema')
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch indicators for {symbol}: {e}")
+                                    oi, rsi, ema = None, None, None
+
                                 url = self.exchange.get_trading_url(symbol)
                                 deep_link = self.exchange.get_deep_link(symbol)
                                 active_sig = await get_active_signal(symbol)
