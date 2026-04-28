@@ -6,7 +6,6 @@ from database import (
     save_signal_to_db, 
     can_send_alert, 
     update_alert_time, 
-    get_active_signal, 
     save_active_signal,
     get_price_one_hour_ago,
     get_price_5min_ago,
@@ -24,14 +23,12 @@ class PumpScanner:
 
     async def run(self):
         self.is_running = True
-        logger.info("🚀 Pump Scanner started (Dual Timeframe: 5m & 60m)")
+        logger.info("🚀 Pump Scanner started (5m & 60m check enabled)")
         
-        # Первичная загрузка капитализации
         await self.mc_provider.update_market_caps()
         
         while self.is_running:
             try:
-                # 1. Получаем все тикеры с BingX Futures
                 tickers = await self.exchange.get_all_tickers()
                 if not tickers:
                     await asyncio.sleep(10)
@@ -41,52 +38,43 @@ class PumpScanner:
                     current_price = data['price']
                     current_volume = data['volume']
                     
-                    # Сохраняем цену в историю для будущих проверок
                     await save_price_to_history(symbol, current_price)
                     
-                    # 2. Получаем старые цены (5 мин и 60 мин назад)
+                    # Получаем историю
                     price_1h = await get_price_one_hour_ago(symbol)
                     price_5m = await get_price_5min_ago(symbol)
                     
-                    if not price_1h:
-                        continue # Еще недостаточно данных в БД для этой монеты
-
-                    # 3. Считаем рост
-                    change_1h = ((current_price - price_1h) / price_1h) * 100
-                    change_5m = ((current_price - price_5m) / price_5m) * 100 if price_5m else 0
+                    change_1h = 0
+                    change_5m = 0
                     
-                    # Логируем подозрительные движения для отладки
-                    if change_5m > 1.0 or change_1h > config.PUMP_THRESHOLD:
-                        logger.info(f"Checking {symbol}: 5m growth: {change_5m:.2f}%, 1h growth: {change_1h:.2f}%")
+                    if price_1h:
+                        change_1h = ((current_price - price_1h) / price_1h) * 100
+                    if price_5m:
+                        change_5m = ((current_price - price_5m) / price_5m) * 100
 
-                    # 4. Определяем, есть ли памп (по часу ИЛИ по 5 минутам)
                     is_pump = False
                     emoji = "📈"
                     
-                    if change_1h >= config.PUMP_THRESHOLD:
+                    # Проверка по часу
+                    if price_1h and change_1h >= config.PUMP_THRESHOLD:
                         is_pump = True
                         emoji = "🚀 MEGA PUMP" if change_1h > 15 else "📈 PUMP"
-                    elif change_5m >= (config.PUMP_THRESHOLD / 2): # Быстрый всплеск (например >1% за 5 мин при пороге 2%)
+                    
+                    # Проверка по 5 минутам (если часового пампа нет, проверяем быстрый всплеск)
+                    if not is_pump and price_5m and change_5m >= (config.PUMP_THRESHOLD / 2):
                         is_pump = True
                         emoji = "⚡️ FAST SPIKE"
 
                     if is_pump:
                         mc = self.mc_provider.get_market_cap(symbol)
                         
-                        # 5. Применяем фильтры (Market Cap и Volume)
                         if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
-                            
-                            # Проверяем кулдаун (чтобы не спамить одной монетой)
                             if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
-                                
-                                # Собираем доп. данные
                                 try:
-                                    oi = await self.exchange.fetch_open_interest(symbol)
                                     indicators = await self.exchange.get_indicators(symbol)
                                     rsi = indicators.get('rsi')
-                                    ema = indicators.get('ema')
-                                except Exception:
-                                    oi, rsi, ema = None, None, None
+                                except:
+                                    rsi = None
 
                                 url = self.exchange.get_trading_url(symbol)
                                 
@@ -99,30 +87,22 @@ class PumpScanner:
                                     market_cap=mc,
                                     volume_24h=current_volume,
                                     url=url,
-                                    oi=oi,
-                                    rsi=rsi,
-                                    ema=ema
+                                    rsi=rsi
                                 )
                                 
                                 if msg_id:
-                                    # Сохраняем в БД как активный и в историю
                                     await save_active_signal(symbol, msg_id, current_price, mc, current_volume, emoji)
-                                    await save_signal_to_db(symbol, current_price, max(change_1h, change_5m), mc, current_volume, emoji, url)
+                                    await save_signal_to_db(symbol, current_price, max(change_1h, change_5m), mc, current_volume, emoji, url, msg_id)
                                     await update_alert_time(symbol)
-                                    logger.info(f"Signal sent for {symbol}: 5m={change_5m:.2f}%, 1h={change_1h:.2f}%")
-                        else:
-                            # Лог для понимания, почему монета отсеялась
-                            if change_1h >= config.PUMP_THRESHOLD or change_5m >= 1.5:
-                                logger.info(f"Skipping {symbol}: Growth OK, but MC (${mc:,.0f}) or Vol (${current_volume:,.0f}) too low.")
+                                    logger.info(f"Signal sent: {symbol} (1h: {change_1h:.2f}%, 5m: {change_5m:.2f}%)")
 
-                # 6. Обновляем капитализацию раз в час
                 if datetime.now().minute == 0:
                     await self.mc_provider.update_market_caps()
 
-                await asyncio.sleep(60) # Пауза между циклами сканирования
+                await asyncio.sleep(60)
 
             except Exception as e:
-                logger.error(f"Error in scanner loop: {e}")
+                logger.error(f"Error in scanner: {e}")
                 await asyncio.sleep(30)
 
     def stop(self):
