@@ -68,28 +68,32 @@ class PumpScanner:
                             # Filter by Market Cap and Volume
                             mc = self.mc_provider.get_market_cap(symbol)
                             
+                            # Fetch additional data (OI, RSI, EMA) - Informational only
+                            oi = await self.exchange.fetch_open_interest(symbol)
+                            indicators = await self.exchange.get_indicators(symbol)
+                            rsi = indicators.get('rsi')
+                            ema = indicators.get('ema')
+
                             # Apply filters: Market Cap AND Volume
                             if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
                                 url = self.exchange.get_trading_url(symbol)
+                                deep_link = self.exchange.get_deep_link(symbol)
                                 active_sig = await get_active_signal(symbol)
-                            else:
-                                if change_pct >= config.PUMP_THRESHOLD:
-                                    logger.info(f"Skipping {symbol}: Growth {change_pct:.1f}%, but MC (${mc:,.0f}) or Vol (${current_volume:,.0f}) too low.")
                                 
                                 if active_sig:
                                     # Signal already exists, update it if growth continues
                                     msg_id, initial_price = active_sig
-                                    # Only update if price increased significantly since last update (e.g. >1%)
-                                    # Or just update every cycle (up to you). Let's do >1% from initial or just update
                                     await self.notifier.update_signal(
-                                        msg_id, emoji, symbol, current_price, change_pct, mc, current_volume, url
+                                        msg_id, emoji, symbol, current_price, change_pct, mc, current_volume, url,
+                                        oi=oi, rsi=rsi, ema=ema, deep_link=deep_link
                                     )
                                     logger.info(f"Updated signal for {symbol}: {change_pct:.2f}%")
                                 else:
                                     # New signal
                                     if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
                                         msg_id = await self.notifier.send_signal(
-                                            emoji, symbol, current_price, change_pct, mc, current_volume, url
+                                            emoji, symbol, current_price, change_pct, mc, current_volume, url,
+                                            oi=oi, rsi=rsi, ema=ema, deep_link=deep_link
                                         )
                                         
                                         if msg_id:
@@ -99,6 +103,9 @@ class PumpScanner:
                                             )
                                             await update_alert_time(symbol)
                                             logger.info(f"New signal sent for {symbol}: {change_pct:.2f}%")
+                            else:
+                                if change_pct >= config.PUMP_THRESHOLD:
+                                    logger.info(f"Skipping {symbol}: Growth {change_pct:.1f}%, but MC (${mc:,.0f}) or Vol (${current_volume:,.0f}) too low.")
 
             except Exception as e:
                 logger.error(f"Error in scanner loop: {e}")
