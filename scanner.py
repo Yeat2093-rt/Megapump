@@ -40,7 +40,6 @@ class PumpScanner:
                     
                     await save_price_to_history(symbol, current_price)
                     
-                    # Получаем историю
                     price_1h = await get_price_one_hour_ago(symbol)
                     price_5m = await get_price_5min_ago(symbol)
                     
@@ -55,12 +54,10 @@ class PumpScanner:
                     is_pump = False
                     emoji = "📈"
                     
-                    # Проверка по часу
                     if price_1h and change_1h >= config.PUMP_THRESHOLD:
                         is_pump = True
                         emoji = "🚀 MEGA PUMP" if change_1h > 15 else "📈 PUMP"
                     
-                    # Проверка по 5 минутам (если часового пампа нет, проверяем быстрый всплеск)
                     if not is_pump and price_5m and change_5m >= (config.PUMP_THRESHOLD / 2):
                         is_pump = True
                         emoji = "⚡️ FAST SPIKE"
@@ -70,15 +67,20 @@ class PumpScanner:
                         
                         if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
                             if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
+                                # Собираем доп. данные
+                                oi = None
+                                rsi = None
+                                ema = None
                                 try:
+                                    oi = await self.exchange.fetch_open_interest(symbol)
                                     indicators = await self.exchange.get_indicators(symbol)
                                     rsi = indicators.get('rsi')
-                                except:
-                                    rsi = None
+                                    ema = indicators.get('ema')
+                                except Exception as e:
+                                    logger.debug(f"Could not fetch indicators for {symbol}: {e}")
 
                                 url = self.exchange.get_trading_url(symbol)
                                 
-                                # Отправляем сигнал
                                 msg_id = await self.notifier.send_signal(
                                     emoji=emoji,
                                     symbol=symbol,
@@ -87,7 +89,9 @@ class PumpScanner:
                                     market_cap=mc,
                                     volume_24h=current_volume,
                                     url=url,
-                                    rsi=rsi
+                                    oi=oi,
+                                    rsi=rsi,
+                                    ema=ema
                                 )
                                 
                                 if msg_id:
