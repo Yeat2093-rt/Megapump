@@ -5,16 +5,19 @@ from config import DB_PATH
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # История цен
         await db.execute('''
             CREATE TABLE IF NOT EXISTS price_history (
                 symbol TEXT, price REAL, timestamp INTEGER
             )
         ''')
+        # Защита от дублей
         await db.execute('''
             CREATE TABLE IF NOT EXISTS alerts (
                 symbol TEXT, last_alert_time INTEGER
             )
         ''')
+        # История сигналов
         await db.execute('''
             CREATE TABLE IF NOT EXISTS signal_history (
                 symbol TEXT, price REAL, change_pct REAL, 
@@ -22,8 +25,11 @@ async def init_db():
                 url TEXT, timestamp INTEGER, message_id INTEGER
             )
         ''')
+        
+        # Пересоздаем таблицу активных сигналов для новой структуры
+        await db.execute('DROP TABLE IF EXISTS active_signals')
         await db.execute('''
-            CREATE TABLE IF NOT EXISTS active_signals (
+            CREATE TABLE active_signals (
                 symbol TEXT PRIMARY KEY, message_id INTEGER, 
                 last_update INTEGER, initial_price REAL,
                 mc REAL, volume REAL, emoji TEXT
