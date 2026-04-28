@@ -27,22 +27,10 @@ class TelegramNotifier:
         self.dp.message.register(self.debug_info, Command("debug"))
 
     async def send_welcome(self, message: types.Message):
-        """Ответ на команду /start"""
-        text = (
-            "👋 <b>Mega Pump Bot Online!</b>\n\n"
-            "Я мониторю фьючерсы BingX (5м и 60м).\n\n"
-            "📌 <b>Команды:</b>\n"
-            "🔍 /check [SYMBOL] — данные\n"
-            "🛠 /debug [SYMBOL] — диагностика\n"
-            "⚙️ /settings — фильтры"
-        )
-        await message.reply(text, parse_mode="HTML")
+        await message.reply("👋 <b>Mega Pump Bot Online!</b>\n\n🔍 /check [SYMBOL] — данные\n🛠 /debug [SYMBOL] — диагностика\n⚙️ /settings — фильтры", parse_mode="HTML")
 
     async def debug_info(self, message: types.Message):
-        """Диагностика монеты или топа"""
-        if not self.exchange or not self.mc_provider:
-            await message.reply("⏳ Загрузка...")
-            return
+        if not self.exchange or not self.mc_provider: return
         args = message.text.split()
         symbol_to_search = args[1].upper() if len(args) > 1 else None
         try:
@@ -50,12 +38,12 @@ class TelegramNotifier:
             if symbol_to_search:
                 found_symbol = next((s for s in tickers.keys() if symbol_to_search in s.upper()), None)
                 if not found_symbol:
-                    await message.reply(f"❌ <b>{symbol_to_search}</b> не найдена на фьючерсах.")
+                    await message.reply(f"❌ {symbol_to_search} не найден на фьючерсах.")
                     return
                 mc = self.mc_provider.get_market_cap(found_symbol)
                 vol = tickers[found_symbol]['volume']
-                status_mc = "✅" if mc >= config.MIN_MARKET_CAP else f"❌ Low (Need ${config.MIN_MARKET_CAP:,.0f})"
-                status_vol = "✅" if vol >= config.MIN_VOLUME_24H else f"❌ Low (Need ${config.MIN_VOLUME_24H:,.0f})"
+                status_mc = "✅" if mc >= config.MIN_MARKET_CAP else f"❌ Low MC"
+                status_vol = "✅" if vol >= config.MIN_VOLUME_24H else f"❌ Low Vol"
                 await message.reply(f"🛠 <b>{found_symbol}:</b>\nMC: ${mc:,.0f} {status_mc}\nVol: ${vol:,.0f} {status_vol}", parse_mode="HTML")
             else:
                 top_gainers = sorted(tickers.items(), key=lambda x: x[1].get('percentage', 0) or 0, reverse=True)[:5]
@@ -83,8 +71,14 @@ class TelegramNotifier:
             mc = self.mc_provider.get_market_cap(found)
             vol = tickers[found]['volume']
             indicators = await self.exchange.get_indicators(found)
-            res = (f"📊 <b>{found}:</b>\nPrice: {tickers[found]['price']:.6f}\nMC: ${mc:,.0f}\nVol: ${vol:,.0f}\n"
-                   f"RSI: {indicators.get('rsi', 0):.2f}")
+            oi = await self.exchange.fetch_open_interest(found)
+            
+            oi_str = f"${oi:,.0f}" if oi else "N/A"
+            rsi_str = f"{indicators.get('rsi', 0):.2f}"
+            ema_str = f"{indicators.get('ema', 0):.6f}"
+
+            res = (f"📊 <b>{found}:</b>\nPrice: {tickers[found]['price']:.6f}\nMC: ${mc:,.0f}\nVol: ${vol:,.0f}\n\n"
+                   f"OI: {oi_str}\nRSI: {rsi_str}\nEMA: {ema_str}")
             await message.reply(res, parse_mode="HTML")
         except Exception as e:
             await message.reply(f"Ошибка: {e}")
@@ -112,18 +106,36 @@ class TelegramNotifier:
 
     async def send_signal(self, emoji, symbol, price, change_pct, market_cap, volume_24h, url, oi=None, rsi=None, ema=None):
         now = datetime.now().strftime("%d.%m %H:%M")
-        text = (f"{emoji} <b>PUMP!</b> {emoji}\n\n<b>{symbol}</b>\nPrice: {price:.6f}\nChange: {change_pct:+.2f}%\n"
-                f"Vol: ${volume_24h:,.0f}\nMC: ${market_cap:,.0f}\nTime: {now}")
+        
+        oi_str = f"${oi:,.0f}" if oi else "N/A"
+        rsi_str = f"{rsi:.2f}" if rsi else "N/A"
+        ema_str = f"{ema:.6f}" if ema else "N/A"
+
+        text = (
+            f"{emoji} <b>PUMP ALERT!</b> {emoji}\n\n"
+            f"<b>Ticker:</b> {symbol}\n"
+            f"<b>Price:</b> {price:.6f} USDT\n"
+            f"<b>Change:</b> {change_pct:+.2f}%\n"
+            f"<b>Vol 24h:</b> ${volume_24h:,.0f}\n"
+            f"<b>MC:</b> ${market_cap:,.0f}\n\n"
+            f"📊 <b>Open Interest:</b> {oi_str}\n"
+            f"📉 <b>RSI (15m):</b> {rsi_str}\n"
+            f"📈 <b>EMA 20 (15m):</b> {ema_str}\n\n"
+            f"⏰ <b>Time:</b> {now}"
+        )
+
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="📈 Trade", url=url),
             InlineKeyboardButton(text="📊 Chart", url=f"https://www.tradingview.com/chart/?symbol=BINGX:{symbol.replace('/', '').replace(':USDT', '')}")
         ]])
+        
         try:
             sent_msg = None
             chart_buf = None
             if self.exchange:
                 ohlcv = await self.exchange.fetch_ohlcv(symbol)
                 if ohlcv: chart_buf = generate_chart(ohlcv, symbol)
+            
             if chart_buf:
                 photo = BufferedInputFile(chart_buf.read(), filename="chart.png")
                 sent_msg = await self.bot.send_photo(self.chat_id, photo=photo, caption=text, reply_markup=kb, parse_mode="HTML")
