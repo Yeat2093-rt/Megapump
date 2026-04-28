@@ -23,7 +23,7 @@ class MarketCapProvider:
         url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
         params = {
             "start": "1",
-            "limit": "500",
+            "limit": "1000",
             "convert": "USD"
         }
         headers = {
@@ -38,7 +38,11 @@ class MarketCapProvider:
                         new_caps = {}
                         for coin in data["data"]:
                             symbol = coin["symbol"].upper()
-                            new_caps[symbol] = coin["quote"]["USD"]["market_cap"]
+                            mcap = coin["quote"]["USD"]["market_cap"]
+                            # Если символ уже есть, сохраняем тот, у которого капа больше (защита от щиткоинов-дублей)
+                            if symbol not in new_caps or mcap > new_caps[symbol]:
+                                new_caps[symbol] = mcap
+                        
                         self.market_caps.update(new_caps)
                         logger.info(f"Market caps updated via CMC. Total coins: {len(self.market_caps)}")
                     else:
@@ -59,12 +63,18 @@ class MarketCapProvider:
                         self.market_caps.update(new_caps)
                         logger.info(f"Market caps updated via CoinGecko. Total coins: {len(self.market_caps)}")
                     else:
-                        logger.warning(f"CoinGecko failed ({response.status}). Add COINMARKETCAP_API_KEY for stability.")
+                        logger.error(f"⚠️ CoinGecko failed ({response.status}). Market Cap filtering will NOT work. Add COINMARKETCAP_API_KEY to Environment Variables on Render!")
         except Exception as e:
-            logger.error(f"Error updating via CoinGecko: {e}")
+            logger.error(f"❌ Error updating via CoinGecko: {e}")
 
     def get_market_cap(self, ticker: str) -> float:
+        # 1. Сначала убираем USDT, двоеточия и слэши
         symbol = ticker.split('/')[0].split('-')[0].split(':')[0].upper()
+        
+        # 2. Убираем числовые префиксы (например, 1000PEPE -> PEPE)
+        import re
+        symbol = re.sub(r'^\d+', '', symbol)
+        
         # Fallback for majors if API is down
         majors = {"BTC": 1000000000000, "ETH": 300000000000, "SOL": 60000000000, "BNB": 80000000000}
         cap = self.market_caps.get(symbol, 0)

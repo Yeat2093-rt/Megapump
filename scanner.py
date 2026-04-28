@@ -72,6 +72,9 @@ class PumpScanner:
                             if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
                                 url = self.exchange.get_trading_url(symbol)
                                 active_sig = await get_active_signal(symbol)
+                            else:
+                                if change_pct >= config.PUMP_THRESHOLD:
+                                    logger.info(f"Skipping {symbol}: Growth {change_pct:.1f}%, but MC (${mc:,.0f}) or Vol (${current_volume:,.0f}) too low.")
                                 
                                 if active_sig:
                                     # Signal already exists, update it if growth continues

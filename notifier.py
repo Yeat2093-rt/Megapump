@@ -20,13 +20,65 @@ class TelegramNotifier:
         # Регистрируем обработчики
         self.dp.message.register(self.send_welcome, Command("start"))
         self.dp.message.register(self.send_test_signal, Command("test"))
+        self.dp.message.register(self.check_coin, Command("check"))
 
     async def send_welcome(self, message: types.Message):
         """Ответ на команду /start"""
         await message.reply(
             "Привет! Я бот для мониторинга пампов на BingX.\n\n"
-            "🚀 Отправь мне команду /test, чтобы я прислал самый свежий реальный пример из рынка."
+            "🚀 <b>/test</b> — прислать последний памп или лидера роста.\n"
+            "🔍 <b>/check SYMBOL</b> — проверить данные конкретной монеты (например: /check APE)",
+            parse_mode="HTML"
         )
+
+    async def check_coin(self, message: types.Message):
+        """Проверка параметров конкретной монеты для диагностики"""
+        if not self.exchange or not self.mc_provider:
+            await message.reply("⏳ Бот еще загружается...")
+            return
+
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply("Введите символ после команды, например: /check APE")
+            return
+
+        symbol_to_check = args[1].upper()
+        await message.reply(f"🔍 Проверяю данные для <b>{symbol_to_check}</b>...", parse_mode="HTML")
+
+        try:
+            # Ищем тикер на бирже
+            tickers = await self.exchange.get_all_tickers()
+            found_symbol = None
+            for s in tickers.keys():
+                if symbol_to_check in s.upper():
+                    found_symbol = s
+                    break
+            
+            if not found_symbol:
+                await message.reply(f"❌ Монета {symbol_to_check} не найдена на BingX (USDT).")
+                return
+
+            price = tickers[found_symbol]['price']
+            volume = tickers[found_symbol]['volume']
+            mc = self.mc_provider.get_market_cap(found_symbol)
+            
+            from config import MIN_MARKET_CAP, MIN_VOLUME_24H
+            
+            status_mc = "✅ OK" if mc >= MIN_MARKET_CAP else f"❌ LOW (Need ${MIN_MARKET_CAP:,.0f})"
+            status_vol = "✅ OK" if volume >= MIN_VOLUME_24H else f"❌ LOW (Need ${MIN_VOLUME_24H:,.0f})"
+
+            response = (
+                f"📊 <b>Данные для {found_symbol}:</b>\n\n"
+                f"💰 <b>Цена:</b> {price:.6f} USDT\n"
+                f"💎 <b>Market Cap:</b> ${mc:,.0f} ({status_mc})\n"
+                f"📈 <b>Volume 24h:</b> ${volume:,.0f} ({status_vol})\n\n"
+                f"<i>Если всё OK, бот пришлет сигнал при росте цены более 7% за час.</i>"
+            )
+            await message.reply(response, parse_mode="HTML")
+            
+        except Exception as e:
+            logger.error(f"Error in check_coin: {e}")
+            await message.reply(f"Ошибка при проверке: {e}")
 
     async def send_test_signal(self, message: types.Message):
         """Поиск последнего сигнала в базе или поиск топ-гейнера на рынке прямо сейчас"""
@@ -55,7 +107,6 @@ class TelegramNotifier:
         await message.reply("🔍 В истории пока пусто. Ищу лидера роста на рынке прямо сейчас...")
         
         try:
-            # Получаем все тикеры
             tickers = await self.exchange.exchange.fetch_tickers()
             usdt_tickers = [t for s, t in tickers.items() if ('/USDT' in s or ':USDT' in s) and t['percentage'] is not None]
             
@@ -63,7 +114,6 @@ class TelegramNotifier:
                 await message.reply("Не удалось получить данные с биржи.")
                 return
 
-            # Находим топ-гейнера за 24ч
             top_coin = max(usdt_tickers, key=lambda x: x['percentage'])
             symbol = top_coin['symbol']
             price = top_coin['last']
@@ -89,7 +139,6 @@ class TelegramNotifier:
         """Стандартный метод для реального сканера с генерацией графика"""
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        # Подготовка текста
         text = (
             f"{emoji} <b>PUMP ALERT!</b> {emoji}\n\n"
             f"<b>Ticker:</b> {symbol}\n"
@@ -100,7 +149,6 @@ class TelegramNotifier:
             f"<b>Time:</b> {now_str}\n"
         )
 
-        # Создание кнопок
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📈 Trade on BingX", url=url),
@@ -108,7 +156,6 @@ class TelegramNotifier:
             ]
         ])
 
-        # Попытка сгенерировать график
         chart_buf = None
         if self.exchange:
             try:
@@ -121,7 +168,6 @@ class TelegramNotifier:
         try:
             sent_msg = None
             if chart_buf:
-                # Отправляем фото с кнопками
                 photo = BufferedInputFile(chart_buf.read(), filename=f"{symbol}_chart.png")
                 sent_msg = await self.bot.send_photo(
                     chat_id=self.chat_id,
@@ -131,7 +177,6 @@ class TelegramNotifier:
                     parse_mode="HTML"
                 )
             else:
-                # Если графика нет, отправляем просто текст
                 sent_msg = await self.bot.send_message(
                     chat_id=self.chat_id,
                     text=text,
@@ -165,7 +210,6 @@ class TelegramNotifier:
         ])
 
         try:
-            # Редактируем подпись к фото (caption)
             await self.bot.edit_message_caption(
                 chat_id=self.chat_id,
                 message_id=message_id,
@@ -174,7 +218,6 @@ class TelegramNotifier:
                 parse_mode="HTML"
             )
         except Exception as e:
-            # Если это было обычное сообщение без фото
             try:
                 await self.bot.edit_message_text(
                     chat_id=self.chat_id,
