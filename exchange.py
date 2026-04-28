@@ -114,9 +114,3 @@ class BingXClient:
         # Symbol format e.g., BTC/USDT:USDT -> BTC-USDT
         clean_symbol = symbol.replace('/', '-').replace(':USDT', '')
         return f"https://bingx.com/en-us/futures/forward/{clean_symbol}/"
-
-    def get_deep_link(self, symbol: str) -> str:
-        """Generate BingX deep link for mobile app."""
-        clean_symbol = symbol.replace('/', '-').replace(':USDT', '')
-        # Basic deep link to trade terminal
-        return f"bingx://futures/trade?symbol={clean_symbol}"

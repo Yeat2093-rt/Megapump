@@ -55,14 +55,14 @@ class TelegramNotifier:
                     break
             
             if not found_symbol:
-                await message.reply(f"❌ Монета {symbol_to_check} не найдена на BingX (USDT).")
+                await message.reply(f"❌ Монета {symbol_to_check} не найдена на BingX (Futures).")
                 return
 
             price = tickers[found_symbol]['price']
             volume = tickers[found_symbol]['volume']
             mc = self.mc_provider.get_market_cap(found_symbol)
             
-            # Fetch indicators
+            # Доп. данные (OI, RSI, EMA)
             oi = await self.exchange.fetch_open_interest(found_symbol)
             indicators = await self.exchange.get_indicators(found_symbol)
             rsi = indicators.get('rsi')
@@ -112,9 +112,8 @@ class TelegramNotifier:
             )
             return
 
-        # Если истории нет, ищем лидера роста на рынке прямо сейчас
         if not self.exchange or not self.mc_provider:
-            await message.reply("⏳ Бот еще инициализируется, подождите пару секунд...")
+            await message.reply("⏳ Бот еще инициализируется...")
             return
 
         await message.reply("🔍 В истории пока пусто. Ищу лидера роста на рынке прямо сейчас...")
@@ -134,9 +133,8 @@ class TelegramNotifier:
             volume = top_coin['quoteVolume']
             mc = self.mc_provider.get_market_cap(symbol)
             url = self.exchange.get_trading_url(symbol)
-            deep_link = self.exchange.get_deep_link(symbol)
             
-            # Fetch indicators for test
+            # Fetch indicators
             oi = await self.exchange.fetch_open_interest(symbol)
             indicators = await self.exchange.get_indicators(symbol)
             
@@ -150,17 +148,16 @@ class TelegramNotifier:
                 url=url,
                 oi=oi,
                 rsi=indicators.get('rsi'),
-                ema=indicators.get('ema'),
-                deep_link=deep_link
+                ema=indicators.get('ema')
             )
         except Exception as e:
             logger.error(f"Error in live test: {e}")
             await message.reply(f"Ошибка при поиске данных: {e}")
-    async def send_signal(self, emoji, symbol, price, change_pct, market_cap, volume_24h, url, oi=None, rsi=None, ema=None, deep_link=None):
+
+    async def send_signal(self, emoji, symbol, price, change_pct, market_cap, volume_24h, url, oi=None, rsi=None, ema=None):
         """Стандартный метод для реального сканера с генерацией графика"""
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        # Format indicators
         oi_str = f"${oi:,.0f}" if oi else "N/A"
         rsi_str = f"{rsi:.2f}" if rsi else "N/A"
         ema_str = f"{ema:.6f}" if ema else "N/A"
@@ -178,17 +175,12 @@ class TelegramNotifier:
             f"<b>Time:</b> {now_str}\n"
         )
 
-        buttons = [
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📈 Trade on BingX", url=url),
                 InlineKeyboardButton(text="📊 TradingView", url=f"https://www.tradingview.com/chart/?symbol=BINGX:{symbol.replace('/', '').replace(':USDT', '')}")
             ]
-        ]
-        
-        if deep_link:
-            buttons.append([InlineKeyboardButton(text="🚀 Быстрая сделка (2 USDT)", url=deep_link)])
-            
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        ])
 
         chart_buf = None
         if self.exchange:
@@ -222,11 +214,10 @@ class TelegramNotifier:
             logger.error(f"Error sending signal to Telegram: {e}")
             return None
 
-    async def update_signal(self, message_id, emoji, symbol, price, change_pct, market_cap, volume_24h, url, oi=None, rsi=None, ema=None, deep_link=None):
+    async def update_signal(self, message_id, emoji, symbol, price, change_pct, market_cap, volume_24h, url, oi=None, rsi=None, ema=None):
         """Обновление существующего сообщения при продолжении пампа"""
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        # Format indicators
         oi_str = f"${oi:,.0f}" if oi else "N/A"
         rsi_str = f"{rsi:.2f}" if rsi else "N/A"
         ema_str = f"{ema:.6f}" if ema else "N/A"
@@ -244,17 +235,12 @@ class TelegramNotifier:
             f"<b>Updated At:</b> {now_str}\n"
         )
 
-        buttons = [
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📈 Trade on BingX", url=url),
                 InlineKeyboardButton(text="📊 TradingView", url=f"https://www.tradingview.com/chart/?symbol=BINGX:{symbol.replace('/', '').replace(':USDT', '')}")
             ]
-        ]
-        
-        if deep_link:
-            buttons.append([InlineKeyboardButton(text="🚀 Быстрая сделка (2 USDT)", url=deep_link)])
-            
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        ])
 
         try:
             await self.bot.edit_message_caption(
