@@ -4,9 +4,8 @@ from datetime import datetime
 import config
 from database import (
     save_signal_to_db, 
-    can_send_alert, 
-    update_alert_time, 
-    save_active_signal,
+    update_alert_milestone,
+    get_last_milestone,
     get_price_one_hour_ago,
     get_price_5min_ago,
     save_price_to_history
@@ -21,9 +20,27 @@ class PumpScanner:
         self.notifier = notifier
         self.is_running = False
 
+    def get_milestone_tier(self, pct):
+        """Определяет текущий порог роста"""
+        if pct >= 50:
+            # 50, 70, 90, 110...
+            return 50 + ((int(pct) - 50) // 20) * 20
+        elif pct >= 30: return 30
+        elif pct >= 15: return 15
+        elif pct >= 7: return 7
+        return 0
+
+    def get_label(self, milestone):
+        """Возвращает заголовок для каждого этапа"""
+        if milestone >= 50: return f"🔥 EXTRA PUMP {milestone}%+ 🔥"
+        if milestone == 30: return "🚀 MEGA PUMP 🚀"
+        if milestone == 15: return "📈 PUMP"
+        if milestone == 7: return "📉 Low Pump"
+        return "Pump"
+
     async def run(self):
         self.is_running = True
-        logger.info("🚀 Pump Scanner started (5m & 60m check enabled)")
+        logger.info("🚀 Multi-Stage Pump Scanner started")
         
         await self.mc_provider.update_market_caps()
         
@@ -43,65 +60,53 @@ class PumpScanner:
                     price_1h = await get_price_one_hour_ago(symbol)
                     price_5m = await get_price_5min_ago(symbol)
                     
-                    change_1h = 0
-                    change_5m = 0
+                    change_1h = ((current_price - price_1h) / price_1h * 100) if price_1h else 0
+                    change_5m = ((current_price - price_5m) / price_5m * 100) if price_5m else 0
                     
-                    if price_1h:
-                        change_1h = ((current_price - price_1h) / price_1h) * 100
-                    if price_5m:
-                        change_5m = ((current_price - price_5m) / price_5m) * 100
-
-                    is_pump = False
-                    emoji = "📈"
+                    max_change = max(change_1h, change_5m)
                     
-                    if price_1h and change_1h >= config.PUMP_THRESHOLD:
-                        is_pump = True
-                        emoji = "🚀 MEGA PUMP" if change_1h > 15 else "📈 PUMP"
+                    # Определяем текущий этап
+                    current_milestone = self.get_milestone_tier(max_change)
                     
-                    if not is_pump and price_5m and change_5m >= (config.PUMP_THRESHOLD / 2):
-                        is_pump = True
-                        emoji = "⚡️ FAST SPIKE"
-
-                    if is_pump:
-                        mc = self.mc_provider.get_market_cap(symbol)
+                    if current_milestone > 0:
+                        # Получаем последний отправленный этап для этой монеты
+                        last_sent_milestone = await get_last_milestone(symbol)
                         
-                        if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
-                            if await can_send_alert(symbol, config.ALERT_COOLDOWN_MINUTES):
+                        # Если монета достигла НОВОГО этапа
+                        if current_milestone > last_sent_milestone:
+                            mc = self.mc_provider.get_market_cap(symbol)
+                            
+                            if mc >= config.MIN_MARKET_CAP and current_volume >= config.MIN_VOLUME_24H:
+                                label = self.get_label(current_milestone)
+                                
                                 # Собираем доп. данные
-                                oi = None
-                                rsi = None
-                                ema = None
+                                oi, rsi = None, None
                                 try:
                                     oi = await self.exchange.fetch_open_interest(symbol)
                                     indicators = await self.exchange.get_indicators(symbol)
                                     rsi = indicators.get('rsi')
-                                    ema = indicators.get('ema')
-                                except Exception as e:
-                                    logger.debug(f"Could not fetch indicators for {symbol}: {e}")
+                                except: pass
 
                                 url = self.exchange.get_trading_url(symbol)
                                 
+                                # Отправляем новый сигнал
                                 msg_id = await self.notifier.send_signal(
-                                    emoji=emoji,
+                                    emoji=label,
                                     symbol=symbol,
                                     price=current_price,
-                                    change_pct=max(change_1h, change_5m),
+                                    change_pct=max_change,
                                     market_cap=mc,
                                     volume_24h=current_volume,
                                     url=url,
                                     oi=oi,
-                                    rsi=rsi,
-                                    ema=ema
+                                    rsi=rsi
                                 )
                                 
                                 if msg_id:
-                                    await save_active_signal(symbol, msg_id, current_price, mc, current_volume, emoji)
-                                    await save_signal_to_db(symbol, current_price, max(change_1h, change_5m), mc, current_volume, emoji, url, msg_id)
-                                    await update_alert_time(symbol)
-                                    logger.info(f"Signal sent: {symbol} (1h: {change_1h:.2f}%, 5m: {change_5m:.2f}%)")
-
-                if datetime.now().minute == 0:
-                    await self.mc_provider.update_market_caps()
+                                    # Обновляем этап в базе
+                                    await update_alert_milestone(symbol, current_milestone)
+                                    await save_signal_to_db(symbol, current_price, max_change, mc, current_volume, label, url, msg_id)
+                                    logger.info(f"New Milestone for {symbol}: {current_milestone}% ({label})")
 
                 await asyncio.sleep(60)
 

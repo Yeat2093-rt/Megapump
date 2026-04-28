@@ -11,10 +11,12 @@ async def init_db():
                 symbol TEXT, price REAL, timestamp INTEGER
             )
         ''')
-        # Защита от дублей
+        # Таблица алертов: добавлена колонка last_milestone
         await db.execute('''
             CREATE TABLE IF NOT EXISTS alerts (
-                symbol TEXT, last_alert_time INTEGER
+                symbol TEXT PRIMARY KEY, 
+                last_alert_time INTEGER,
+                last_milestone INTEGER DEFAULT 0
             )
         ''')
         # История сигналов
@@ -25,18 +27,30 @@ async def init_db():
                 url TEXT, timestamp INTEGER, message_id INTEGER
             )
         ''')
-        
-        # Пересоздаем таблицу активных сигналов для новой структуры
-        await db.execute('DROP TABLE IF EXISTS active_signals')
-        await db.execute('''
-            CREATE TABLE active_signals (
-                symbol TEXT PRIMARY KEY, message_id INTEGER, 
-                last_update INTEGER, initial_price REAL,
-                mc REAL, volume REAL, emoji TEXT
-            )
-        ''')
         await db.commit()
 
+async def get_last_milestone(symbol: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('SELECT last_milestone FROM alerts WHERE symbol = ?', (symbol,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def update_alert_milestone(symbol: str, milestone: int):
+    current_time = int(time.time())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT OR REPLACE INTO alerts (symbol, last_alert_time, last_milestone) 
+            VALUES (?, ?, ?)
+        ''', (symbol, current_time, milestone))
+        await db.commit()
+
+async def reset_milestone(symbol: str):
+    """Сброс этапа (например, если цена упала или прошло много времени)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('UPDATE alerts SET last_milestone = 0 WHERE symbol = ?', (symbol,))
+        await db.commit()
+
+# ... (остальные функции: save_price_to_history, get_price_one_hour_ago и т.д. остаются без изменений)
 async def save_price_to_history(symbol: str, price: float):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('INSERT INTO price_history (symbol, price, timestamp) VALUES (?, ?, ?)',
@@ -72,35 +86,6 @@ async def save_signal_to_db(symbol, price, change_pct, market_cap, volume, emoji
             (symbol, price, change_pct, market_cap, volume, emoji, url, timestamp, message_id) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (symbol, price, change_pct, market_cap, volume, emoji, url, int(time.time()), message_id))
-        await db.commit()
-
-async def save_active_signal(symbol, message_id, price, mc, volume, emoji):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            INSERT OR REPLACE INTO active_signals (symbol, message_id, last_update, initial_price, mc, volume, emoji)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (symbol, message_id, int(time.time()), price, mc, volume, emoji))
-        await db.commit()
-
-async def get_active_signal(symbol):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('SELECT message_id, initial_price, mc, volume, emoji FROM active_signals WHERE symbol = ?', (symbol,)) as cursor:
-            return await cursor.fetchone()
-
-async def can_send_alert(symbol: str, cooldown_minutes: int):
-    cooldown_seconds = cooldown_minutes * 60
-    current_time = int(time.time())
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('SELECT last_alert_time FROM alerts WHERE symbol = ?', (symbol,)) as cursor:
-            row = await cursor.fetchone()
-            if not row: return True
-            return (current_time - row[0]) > cooldown_seconds
-
-async def update_alert_time(symbol: str):
-    current_time = int(time.time())
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('INSERT OR REPLACE INTO alerts (symbol, last_alert_time) VALUES (?, ?)',
-                         (symbol, current_time))
         await db.commit()
 
 async def get_last_signal_from_db():
