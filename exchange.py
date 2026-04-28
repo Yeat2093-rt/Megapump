@@ -8,6 +8,9 @@ class BingXClient:
     def __init__(self):
         self.exchange = ccxt.bingx({
             'enableRateLimit': True,
+            'options': {
+                'defaultType': 'swap',  # Фокусируемся на фьючерсах (бессрочные свопы)
+            }
         })
 
     async def get_all_tickers(self) -> Dict[str, Dict[str, float]]:
